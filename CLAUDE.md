@@ -21,7 +21,9 @@ Déployé sur Sepolia testnet — zéro argent réel.
 
 ### Ce qu'on N'implémente PAS
 
-- **EntryPoint** : contrat singleton déployé par l'Ethereum Foundation, adresse Sepolia fixe : `0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789`
+- **EntryPoint** : contrat singleton déployé par l'Ethereum Foundation.
+  - Adresse Sepolia : `0x4337084d9e255ff0702461cf8895ce9e3b5ff108` (v0.8, vérifié actif)
+  - Etherscan : https://sepolia.etherscan.io/address/0x4337084d9e255ff0702461cf8895ce9e3b5ff108
 
 ---
 
@@ -73,34 +75,92 @@ erc4337/
 - Bundling multi-UserOp
 - Frontend
 
-### UserOperation — la struct centrale
+---
+
+## Interfaces — ce que nos contrats doivent implémenter
+
+### `PackedUserOperation` — la struct centrale (v0.8+)
 
 ```solidity
-struct UserOperation {
-    address sender;                // adresse du SmartAccount
-    uint256 nonce;                 // anti-replay
-    bytes initCode;                // pour déployer le SmartAccount si pas encore déployé
-    bytes callData;                // ce que le SmartAccount doit exécuter
-    uint256 callGasLimit;
-    uint256 verificationGasLimit;
-    uint256 preVerificationGas;
-    uint256 maxFeePerGas;
-    uint256 maxPriorityFeePerGas;
-    bytes paymasterAndData;        // adresse du Paymaster + données
-    bytes signature;               // signature validée par validateUserOp()
+struct PackedUserOperation {
+    address sender;              // adresse du SmartAccount
+    uint256 nonce;               // anti-replay : 192-bit key | 64-bit sequence
+    bytes initCode;              // factory(20 bytes) + factoryData — vide si déjà déployé
+    bytes callData;              // ce que le SmartAccount doit exécuter
+    bytes32 accountGasLimits;    // uint128(verificationGasLimit) | uint128(callGasLimit)
+    uint256 preVerificationGas;  // gas off-chain : compensation bundler
+    bytes32 gasFees;             // uint128(maxPriorityFeePerGas) | uint128(maxFeePerGas)
+    bytes paymasterAndData;      // paymaster(20) | verifGasLimit(16) | postOpGasLimit(16) | data
+    bytes signature;             // validée par validateUserOp() — format libre
 }
 ```
 
-### Flux complet V1
+### `IAccount` — interface que SmartAccount.sol doit implémenter
+
+```solidity
+interface IAccount {
+    function validateUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash,
+        uint256 missingAccountFunds
+    ) external returns (uint256 validationData);
+}
+```
+
+### `IPaymaster` — interface que Paymaster.sol doit implémenter
+
+```solidity
+interface IPaymaster {
+    function validatePaymasterUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash,
+        uint256 maxCost
+    ) external returns (bytes memory context, uint256 validationData);
+
+    function postOp(
+        PostOpMode mode,
+        bytes calldata context,
+        uint256 actualGasCost,
+        uint256 actualUserOpFeePerGas  // nouveau en v0.8+
+    ) external;
+
+    enum PostOpMode {
+        opSucceeded,  // exécution réussie
+        opReverted    // exécution revert — paymaster paie quand même le gas
+    }
+}
+```
+
+### `validationData` — le return value piégeux
+
+`validateUserOp` et `validatePaymasterUserOp` retournent tous les deux un `uint256` packed :
 
 ```
-1. Script de test crée un UserOp et le signe avec une clé privée de test
-2. UserOp envoyé au Bundler (HTTP JSON-RPC local)
-3. Bundler valide basiquement le UserOp
-4. Bundler envoie une tx à l'EntryPoint Sepolia
-5. EntryPoint appelle validateUserOp() sur le SmartAccount
-6. EntryPoint appelle validatePaymasterUserOp() sur le Paymaster
-7. Si tout ok -> EntryPoint exécute le callData
+bits   0-159 : adresse aggregator (0x0 = signature valide, 0x1 = SIG_VALIDATION_FAILED)
+bits 160-207 : validUntil  — timestamp 6 bytes (0 = infini)
+bits 208-255 : validAfter  — timestamp 6 bytes
+```
+
+Pour V1 : retourner `0` (succès) ou `1` (échec signature). Ne jamais revert sur une mauvaise
+signature — revert uniquement pour les erreurs fatales (nonce invalide, fonds insuffisants).
+
+---
+
+## Flux complet V1
+
+```
+1. Script de test crée une PackedUserOperation et la signe avec une clé privée de test
+2. UserOp envoyée au Bundler (HTTP JSON-RPC local) via eth_sendUserOperation
+3. Bundler valide basiquement la UserOp
+4. Bundler envoie une tx handleOps([userOp], beneficiary) à l'EntryPoint Sepolia
+5. EntryPoint — verification loop :
+   a. Appelle validateUserOp() sur le SmartAccount
+   b. Appelle validatePaymasterUserOp() sur le Paymaster
+   c. Vérifie que le dépôt du Paymaster sur l'EntryPoint couvre le coût max
+6. EntryPoint — execution loop :
+   a. Exécute le callData sur le SmartAccount
+   b. Appelle postOp() sur le Paymaster si context non vide
+   c. Rembourse le surplus de gas, paie le beneficiary
 ```
 
 ---
@@ -114,6 +174,7 @@ struct UserOperation {
 - Nommage : `_param` pour les paramètres de fonction, `s_variable` pour le storage, `CONSTANTE` pour les constantes
 - Toujours émettre des events sur les changements d'état importants
 - Jamais de `tx.origin`
+- Toujours vérifier `msg.sender == address(entryPoint)` dans `validateUserOp` et `validatePaymasterUserOp`
 
 ### TypeScript
 
@@ -158,7 +219,7 @@ npm run start
 ```
 SEPOLIA_RPC_URL=
 PRIVATE_KEY=
-ENTRYPOINT_ADDRESS=0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789
+ENTRYPOINT_ADDRESS=0x4337084d9e255ff0702461cf8895ce9e3b5ff108
 SMART_ACCOUNT_ADDRESS=
 PAYMASTER_ADDRESS=
 ```
@@ -169,7 +230,7 @@ PAYMASTER_ADDRESS=
 
 - Spec ERC-4337 : https://eips.ethereum.org/EIPS/eip-4337
 - Repo de référence (lire, pas copier) : https://github.com/eth-infinitism/account-abstraction
-- EntryPoint Sepolia Etherscan : https://sepolia.etherscan.io/address/0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789
+- EntryPoint Sepolia Etherscan : https://sepolia.etherscan.io/address/0x4337084d9e255ff0702461cf8895ce9e3b5ff108
 - Viem docs : https://viem.sh
 
 ---
