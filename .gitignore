@@ -1,0 +1,22 @@
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# Node
+bundler/node_modules/
+bundler/dist/
+frontend/node_modules/
+
+# Env
+.env
+.env.local
+*.env
+
+# OS
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/contracts/lib/
+
