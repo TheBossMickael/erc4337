@@ -20,3 +20,6 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Local AI context (kept local, not published)
+CLAUDE.md
+
