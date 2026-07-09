@@ -21,7 +21,9 @@ export const missingEnv: string[] = REQUIRED_ENV.filter((key) => !import.meta.en
 
 export const config = {
   rpcUrl: import.meta.env.VITE_RPC_URL ?? '',
-  bundlerUrl: import.meta.env.VITE_BUNDLER_URL ?? 'http://localhost:3000',
+  // Default is RELATIVE (same origin) — correct for the hosted single-service (Render). Local dev
+  // sets VITE_BUNDLER_URL=http://localhost:3000 in frontend/.env to reach the bundler on :3000.
+  bundlerUrl: import.meta.env.VITE_BUNDLER_URL ?? '',
   entryPoint: (import.meta.env.VITE_ENTRYPOINT_ADDRESS ?? '0x') as Hex,
   demoAccount: (import.meta.env.VITE_DEMO_ACCOUNT_ADDRESS ?? '0x') as Hex,
   paymaster: (import.meta.env.VITE_PAYMASTER_ADDRESS ?? '0x') as Hex,
