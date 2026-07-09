@@ -24,9 +24,15 @@ function required(name: string): string {
 export const config = {
   rpcUrl: required('SEPOLIA_RPC_URL'),
   entryPoint: getAddress(required('ENTRYPOINT_ADDRESS')),
-  smartAccount: getAddress(required('SMART_ACCOUNT_ADDRESS')),
+  // Informational only: the bundler relays whatever `sender` the UserOp carries (handler.ts
+  // checks only the EntryPoint). Optional in V2 — a freshly SETUP-deployed account needs no restart.
+  smartAccount: process.env.SMART_ACCOUNT_ADDRESS
+    ? getAddress(process.env.SMART_ACCOUNT_ADDRESS)
+    : undefined,
   paymaster: getAddress(required('PAYMASTER_ADDRESS')),
   bundlerKey: required('BUNDLER_PRIVATE_KEY') as Hex,
+  // Deployer key for the SETUP flow (POST /deploy). Optional: only required if /deploy is used.
+  deployerKey: (process.env.DEPLOYER_PRIVATE_KEY ?? '') as Hex,
   ownerKey: (process.env.OWNER_PRIVATE_KEY ?? '') as Hex,
   port: Number(process.env.PORT ?? 3000),
 } as const;

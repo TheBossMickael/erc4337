@@ -4,6 +4,8 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
 import {SmartAccount} from "../src/SmartAccount.sol";
+import {BaseAccount} from "../src/BaseAccount.sol";
+import {SecretQuestionAccount} from "../src/SecretQuestionAccount.sol";
 import {Paymaster} from "../src/Paymaster.sol";
 import {IEntryPoint} from "../src/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "../src/interfaces/IAccount.sol";
@@ -100,7 +102,7 @@ contract IntegrationForkTest is Test {
         userOp.nonce = entryPoint.getNonce(address(account), 0); // key = 0 in V1
         userOp.initCode = ""; // account already deployed: no factory in V1
         // callData = call to execute(TARGET, transferValue, "")
-        userOp.callData = abi.encodeCall(SmartAccount.execute, (TARGET, transferValue, ""));
+        userOp.callData = abi.encodeCall(BaseAccount.execute, (TARGET, transferValue, ""));
         // accountGasLimits = verificationGasLimit | callGasLimit
         userOp.accountGasLimits = _pack(300_000, 300_000);
         userOp.preVerificationGas = 100_000;
@@ -128,5 +130,47 @@ contract IntegrationForkTest is Test {
         // The beneficiary (bundler) was indeed reimbursed in gas by the paymaster deposit.
         assertGt(beneficiary.balance, 0, "beneficiary reimbursed");
         console2.log("Beneficiary reimbursement (wei):", beneficiary.balance);
+    }
+
+    /// @dev Same end-to-end flow as V1, but the account is a SecretQuestionAccount: the signer is
+    ///      a DERIVED address and the UserOp is signed by the matching derived key (knowledge proof).
+    function test_handleOps_secretQuestionAccount_sponsoredByPaymaster() public onlyFork {
+        uint256 signerKey = 0x5EC4E7; // models the key the frontend derives from the answers
+        SecretQuestionAccount sqAccount = new SecretQuestionAccount(ENTRYPOINT, vm.addr(signerKey));
+
+        // --- Fund the Paymaster on the EntryPoint --------------------------
+        vm.deal(address(this), 2 ether);
+        entryPoint.depositTo{value: 1 ether}(address(paymaster));
+
+        // --- Fund the account for the callData's ETH transfer --------------
+        uint256 transferValue = 0.01 ether;
+        vm.deal(address(sqAccount), 1 ether);
+
+        // --- Build the UserOp ----------------------------------------------
+        PackedUserOperation memory userOp;
+        userOp.sender = address(sqAccount);
+        userOp.nonce = entryPoint.getNonce(address(sqAccount), 0);
+        userOp.initCode = "";
+        userOp.callData = abi.encodeCall(BaseAccount.execute, (TARGET, transferValue, ""));
+        userOp.accountGasLimits = _pack(300_000, 300_000);
+        userOp.preVerificationGas = 100_000;
+        userOp.gasFees = _pack(uint128(2 gwei), uint128(uint256(block.basefee) + 20 gwei));
+        userOp.paymasterAndData = _paymasterAndData(address(paymaster), 200_000, 100_000);
+
+        // --- Sign with the DERIVED key (proof of knowing the answers) ------
+        bytes32 userOpHash = entryPoint.getUserOpHash(userOp);
+        bytes32 digest = MessageHashUtils.toEthSignedMessageHash(userOpHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, digest);
+        userOp.signature = abi.encodePacked(r, s, v);
+
+        // --- Submit like a bundler would -----------------------------------
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = userOp;
+
+        uint256 targetBalanceBefore = TARGET.balance;
+        entryPoint.handleOps(ops, beneficiary);
+
+        assertEq(TARGET.balance - targetBalanceBefore, transferValue, "V2 callData executed: ETH received");
+        assertGt(beneficiary.balance, 0, "beneficiary reimbursed by paymaster deposit");
     }
 }

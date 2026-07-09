@@ -126,7 +126,7 @@ async function main(): Promise<void> {
     params: [toHexOp(userOp), ENTRYPOINT],
   };
 
-  const res = await fetch(BUNDLER_URL, {
+  const res = await fetch(`${BUNDLER_URL}/rpc`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

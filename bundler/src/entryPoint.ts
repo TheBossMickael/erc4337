@@ -75,4 +75,23 @@ export const entryPointAbi = [
     ],
     outputs: [{ name: 'nonce', type: 'uint256' }],
   },
+  // EntryPoint revert errors — declared so viem decodes the human reason (e.g. "AA24 signature
+  // error") instead of just the raw selector 0x220266b6.
+  {
+    type: 'error',
+    name: 'FailedOp',
+    inputs: [
+      { name: 'opIndex', type: 'uint256' },
+      { name: 'reason', type: 'string' },
+    ],
+  },
+  {
+    type: 'error',
+    name: 'FailedOpWithRevert',
+    inputs: [
+      { name: 'opIndex', type: 'uint256' },
+      { name: 'reason', type: 'string' },
+      { name: 'inner', type: 'bytes' },
+    ],
+  },
 ] as const;

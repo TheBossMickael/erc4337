@@ -6,7 +6,7 @@
 export
 
 .DEFAULT_GOAL := help
-.PHONY: help install build test test-fork anvil deploy-sim deploy bundler client clean
+.PHONY: help install build test test-fork anvil deploy-sim deploy deploy-v2-sim deploy-v2 deploy-v2-local bundler client front clean
 
 help:
 	@echo "ERC-4337 from scratch -- make targets:"
@@ -15,15 +15,20 @@ help:
 	@echo "  test        Unit tests (local EVM)"
 	@echo "  test-fork   Integration test vs real EntryPoint (needs SEPOLIA_RPC_URL)"
 	@echo "  anvil       Local Anvil fork of Sepolia"
-	@echo "  deploy-sim  Simulate deployment (no broadcast)"
-	@echo "  deploy      Deploy to Sepolia (broadcast)"
+	@echo "  deploy-sim  Simulate V1 deployment (no broadcast)"
+	@echo "  deploy      Deploy V1 to Sepolia (broadcast)"
+	@echo "  deploy-v2-sim  Simulate V2 deployment (SecretQuestionAccount, no broadcast)"
+	@echo "  deploy-v2   Deploy V2 to Sepolia (SecretQuestionAccount, broadcast)"
+	@echo "  deploy-v2-local Deploy V2 to a local Anvil fork (127.0.0.1:8545)"
 	@echo "  bundler     Start the bundler server"
 	@echo "  client      Send a demo UserOp (calls Counter.increment())"
+	@echo "  front       Start the V2 frontend (Vite dev server)"
 	@echo "  clean       Remove build artifacts"
 
 install:
 	git submodule update --init --recursive
 	cd bundler && npm install
+	cd frontend && npm install
 
 build:
 	cd contracts && forge build
@@ -35,7 +40,7 @@ test-fork:
 	cd contracts && forge test --match-path test/Integration.fork.t.sol --fork-url $(SEPOLIA_RPC_URL) -vvv
 
 anvil:
-	anvil --fork-url $(SEPOLIA_RPC_URL)
+	anvil --fork-url $(SEPOLIA_RPC_URL) --chain-id 11155111
 
 deploy-sim:
 	cd contracts && forge script script/Deploy.s.sol --rpc-url sepolia
@@ -43,11 +48,23 @@ deploy-sim:
 deploy:
 	cd contracts && forge script script/Deploy.s.sol --rpc-url sepolia --broadcast
 
+deploy-v2-sim:
+	cd contracts && forge script script/DeploySecretQuestion.s.sol --rpc-url sepolia
+
+deploy-v2:
+	cd contracts && forge script script/DeploySecretQuestion.s.sol --rpc-url sepolia --broadcast --verify
+
+deploy-v2-local:
+	cd contracts && forge script script/DeploySecretQuestion.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
+
 bundler:
 	cd bundler && npx ts-node src/index.ts
 
 client:
 	cd bundler && npx ts-node src/client/sendUserOp.ts
+
+front:
+	cd frontend && npm run dev
 
 clean:
 	cd contracts && forge clean

@@ -1,22 +1,47 @@
-import express, { type Request, type Response } from 'express';
+import express, { type Request, type Response, type NextFunction } from 'express';
+import { existsSync } from 'fs';
+import { resolve } from 'path';
 import { config } from './config';
 import { handleSendUserOperation } from './handler';
+import { handleDeploy } from './deploy';
 
 /** Sepolia chain id: 11155111 = 0xaa36a7. */
 const SEPOLIA_CHAIN_ID = '0xaa36a7';
 
+/** Built frontend, one level up from bundler/src (dev) or bundler/dist (compiled). */
+const FRONTEND_DIST = resolve(__dirname, '../../frontend/dist');
+
 /**
- * Creates the bundler's JSON-RPC 2.0 server.
- * A single POST / route that dispatches on the `method` field:
- *   - eth_sendUserOperation    (the core of the bundler)
- *   - eth_supportedEntryPoints (stub: returns our EntryPoint)
- *   - eth_chainId              (stub: Sepolia)
+ * Permissive CORS. Needed when the frontend is served from a DIFFERENT origin (local dev: Vite on
+ * :5173 vs bundler on :3000). When the bundler also serves the frontend (Render, single origin),
+ * it is simply a no-op. In V1 the client was Node (no CORS needed).
+ */
+function cors(req: Request, res: Response, next: NextFunction): void {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+}
+
+/**
+ * Creates the bundler server.
+ *   - POST /rpc     JSON-RPC 2.0, dispatched on `method`:
+ *                     eth_sendUserOperation / eth_supportedEntryPoints / eth_chainId
+ *   - POST /deploy  REST (V2 SETUP): deploys a SecretQuestionAccount for a derived signer.
+ *   - GET  /*       the built frontend (only if frontend/dist exists — Render "option C"; in local
+ *                   dev the frontend runs on the Vite dev server, so this is skipped).
  */
 export function createServer() {
   const app = express();
+  app.use(cors);
   app.use(express.json());
 
-  app.post('/', async (req: Request, res: Response) => {
+  // JSON-RPC moved from '/' to '/rpc' so '/' can serve the frontend page.
+  app.post('/rpc', async (req: Request, res: Response) => {
     const { id, method, params } = req.body ?? {};
 
     try {
@@ -41,6 +66,35 @@ export function createServer() {
       res.json({ jsonrpc: '2.0', id: id ?? null, error: { code: -32000, message } });
     }
   });
+
+  // REST endpoint (NOT JSON-RPC): SETUP flow deploys a SecretQuestionAccount for a derived signer.
+  app.post('/deploy', async (req: Request, res: Response) => {
+    try {
+      const result = await handleDeploy(req.body ?? {});
+      res.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[deploy] error:', message);
+      res.status(400).json({ error: message });
+    }
+  });
+
+  // Serve the built frontend (single-service "option C"). Skipped in local dev (no dist).
+  if (existsSync(FRONTEND_DIST)) {
+    app.use(express.static(FRONTEND_DIST));
+    // SPA fallback: any unmatched GET returns index.html (React handles routing). Express 5 wildcard
+    // routes are finicky, so we use a trailing middleware instead of app.get('*').
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      if (req.method === 'GET') {
+        res.sendFile(resolve(FRONTEND_DIST, 'index.html'));
+      } else {
+        next();
+      }
+    });
+    console.log(`[server] serving frontend from ${FRONTEND_DIST}`);
+  } else {
+    console.log('[server] frontend/dist not found — API only (frontend served separately in dev)');
+  }
 
   return app;
 }
