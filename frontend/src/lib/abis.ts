@@ -60,3 +60,32 @@ export const counterAbi = [
   { type: 'function', name: 'increment', stateMutability: 'nonpayable', inputs: [], outputs: [] },
   { type: 'function', name: 'count', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
 ] as const;
+
+/**
+ * AccountFactory — used to (1) READ the counterfactual account address off-chain (getAddress) and
+ * (2) ENCODE the createAccount calldata that goes into a first UserOp's initCode.
+ */
+export const factoryAbi = [
+  {
+    type: 'function',
+    name: 'getAddress',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'x', type: 'bytes32' },
+      { name: 'y', type: 'bytes32' },
+      { name: 'salt', type: 'uint256' },
+    ],
+    outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'createAccount',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'x', type: 'bytes32' },
+      { name: 'y', type: 'bytes32' },
+      { name: 'salt', type: 'uint256' },
+    ],
+    outputs: [{ type: 'address' }],
+  },
+] as const;

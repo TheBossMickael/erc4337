@@ -15,6 +15,5 @@ app.listen(config.port, () => {
   console.log(`  EntryPoint : ${config.entryPoint}`);
   console.log(`  Account    : ${config.smartAccount ?? '(relays any sender)'}`);
   console.log(`  Paymaster  : ${config.paymaster}`);
-  console.log(`  Deploy     : ${config.deployerKey ? 'POST /deploy enabled' : 'disabled (no DEPLOYER_PRIVATE_KEY)'}`);
   console.log('─────────────────────────────────────────────');
 });

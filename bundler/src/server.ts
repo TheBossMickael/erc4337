@@ -3,7 +3,6 @@ import { existsSync } from 'fs';
 import { resolve } from 'path';
 import { config } from './config';
 import { handleSendUserOperation } from './handler';
-import { handleDeploy } from './deploy';
 
 /** Sepolia chain id: 11155111 = 0xaa36a7. */
 const SEPOLIA_CHAIN_ID = '0xaa36a7';
@@ -31,9 +30,11 @@ function cors(req: Request, res: Response, next: NextFunction): void {
  * Creates the bundler server.
  *   - POST /rpc     JSON-RPC 2.0, dispatched on `method`:
  *                     eth_sendUserOperation / eth_supportedEntryPoints / eth_chainId
- *   - POST /deploy  REST (V2 SETUP): deploys a SecretQuestionAccount for a derived signer.
  *   - GET  /*       the built frontend (only if frontend/dist exists — Render "option C"; in local
  *                   dev the frontend runs on the Vite dev server, so this is skipped).
+ *
+ * V3 note: there is NO deploy endpoint. Accounts deploy themselves lazily via the factory's
+ * `initCode` inside the first UserOp (handled transparently in eth_sendUserOperation).
  */
 export function createServer() {
   const app = express();
@@ -64,18 +65,6 @@ export function createServer() {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[bundler] error:', message);
       res.json({ jsonrpc: '2.0', id: id ?? null, error: { code: -32000, message } });
-    }
-  });
-
-  // REST endpoint (NOT JSON-RPC): SETUP flow deploys a SecretQuestionAccount for a derived signer.
-  app.post('/deploy', async (req: Request, res: Response) => {
-    try {
-      const result = await handleDeploy(req.body ?? {});
-      res.json(result);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error('[deploy] error:', message);
-      res.status(400).json({ error: message });
     }
   });
 

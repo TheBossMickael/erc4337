@@ -31,8 +31,7 @@ export const config = {
     : undefined,
   paymaster: getAddress(required('PAYMASTER_ADDRESS')),
   bundlerKey: required('BUNDLER_PRIVATE_KEY') as Hex,
-  // Deployer key for the SETUP flow (POST /deploy). Optional: only required if /deploy is used.
-  deployerKey: (process.env.DEPLOYER_PRIVATE_KEY ?? '') as Hex,
+  // V3: no deployer key — accounts self-deploy via the factory's initCode on the first UserOp.
   ownerKey: (process.env.OWNER_PRIVATE_KEY ?? '') as Hex,
   port: Number(process.env.PORT ?? 3000),
 } as const;

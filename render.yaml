@@ -2,14 +2,18 @@
 # (You can also configure these same values manually in the Render dashboard: New + -> Web Service.)
 #
 # Build: install + build the frontend (-> frontend/dist) and compile the bundler (-> bundler/dist).
-# Start: run the compiled bundler, which serves frontend/dist + POST /rpc + POST /deploy.
+# Start: run the compiled bundler, which serves frontend/dist + POST /rpc.
+#
+# V3: there is NO deploy endpoint and NO deployer key — accounts self-deploy via the factory's
+# initCode inside the first UserOp. After `make deploy-v3`, replace the 0x0…0 placeholders below with
+# the AccountFactory / Paymaster / Counter addresses it prints.
 #
 # If the build fails on a missing `vite`/`tsc`, force devDependencies by replacing `npm install`
 # with `npm install --include=dev`.
 
 services:
   - type: web
-    name: erc4337-secret-question
+    name: erc4337
     runtime: node
     plan: free
     buildCommand: cd frontend && npm install && npm run build && cd ../bundler && npm install && npm run build
@@ -20,13 +24,11 @@ services:
         sync: false
       - key: BUNDLER_PRIVATE_KEY
         sync: false
-      - key: DEPLOYER_PRIVATE_KEY
-        sync: false
       # ── Server-side public ──
       - key: ENTRYPOINT_ADDRESS
         value: "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
       - key: PAYMASTER_ADDRESS
-        value: "0x73B4f9E64A36a82bcCbAE8c44a098446c444C57D"
+        value: "0x93ba5Cec8f2E500FF54d007c98AE53eEd7a1d314"
       # ── Frontend build-time vars (baked into the bundle; VITE_RPC_URL stays private) ──
       - key: VITE_RPC_URL
         sync: false
@@ -34,11 +36,11 @@ services:
         value: "" # relative -> same origin (no CORS)
       - key: VITE_ENTRYPOINT_ADDRESS
         value: "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
-      - key: VITE_DEMO_ACCOUNT_ADDRESS
-        value: "0xE4c8C009A84E1d279fd5b0e4fB597374d332324C"
+      - key: VITE_FACTORY_ADDRESS
+        value: "0x28d7291A4D81A2372b923b2aCb87B3e93C84Ac1a"
       - key: VITE_PAYMASTER_ADDRESS
-        value: "0x73B4f9E64A36a82bcCbAE8c44a098446c444C57D"
+        value: "0x93ba5Cec8f2E500FF54d007c98AE53eEd7a1d314"
       - key: VITE_COUNTER_ADDRESS
-        value: "0xb73D44DeaceAdCBf060A11c9f5A22AE9dccb5F1D"
+        value: "0x3921D645a40d7e1E155d7f58207193976EbAb48d"
       - key: VITE_EXPLORER_URL
         value: "https://sepolia.etherscan.io"

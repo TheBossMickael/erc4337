@@ -1,10 +1,22 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { Hex } from 'viem';
 import { config, missingEnv } from './config';
-import { UseScreen } from './screens/UseScreen';
-import { SetupScreen } from './screens/SetupScreen';
+import { getAccountAddress, getCount } from './lib/chain';
+import { runPasskeyIncrement, type IncrementOutcome } from './lib/passkeyFlow';
+import type { Passkey } from './lib/webauthn';
+import { friendlyError } from './lib/errors';
 
-const STORAGE_KEY = 'erc4337.v2.account';
+const STORAGE_KEY = 'erc4337.v3.passkey';
+
+function loadPasskey(): Passkey | null {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as Passkey;
+  } catch {
+    return null;
+  }
+}
 
 export function App() {
   if (missingEnv.length > 0) {
@@ -13,87 +25,203 @@ export function App() {
   return <AppMain />;
 }
 
-type Screen = 'use' | 'setup';
+type Status =
+  | { kind: 'idle' }
+  | { kind: 'running' }
+  | { kind: 'done'; outcome: IncrementOutcome }
+  | { kind: 'error'; message: string };
 
 function AppMain() {
-  const [screen, setScreen] = useState<Screen>('use');
-  const [account, setAccount] = useState<Hex>(
-    (localStorage.getItem(STORAGE_KEY) as Hex | null) ?? config.demoAccount,
-  );
+  const [passkey, setPasskey] = useState<Passkey | null>(() => loadPasskey());
+  const [account, setAccount] = useState<Hex | null>(null);
+  const [status, setStatus] = useState<Status>({ kind: 'idle' });
+  const [currentCount, setCurrentCount] = useState<bigint | null>(null);
 
-  const isDemoAccount = account.toLowerCase() === config.demoAccount.toLowerCase();
+  // Read the shared Counter once on load, so the before -> after has context.
+  useEffect(() => {
+    let cancelled = false;
+    getCount()
+      .then((c) => !cancelled && setCurrentCount(c))
+      .catch(() => {
+        /* transient RPC issue: just don't show the live count */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  // SETUP -> USE handoff: keep the new account in memory + localStorage. No .env edit, no restart.
-  function onAccountCreated(newAccount: Hex) {
-    setAccount(newAccount);
-    localStorage.setItem(STORAGE_KEY, newAccount);
-    setScreen('use');
+  // Resolve the counterfactual account address whenever we have a passkey (before any tx).
+  useEffect(() => {
+    if (!passkey) {
+      setAccount(null);
+      return;
+    }
+    let cancelled = false;
+    getAccountAddress(passkey.x, passkey.y)
+      .then((a) => !cancelled && setAccount(a))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [passkey]);
+
+  const running = status.kind === 'running';
+
+  async function onRun() {
+    setStatus({ kind: 'running' });
+    try {
+      const outcome = await runPasskeyIncrement(passkey);
+      setPasskey(outcome.passkey);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(outcome.passkey));
+      setCurrentCount(outcome.countAfter);
+      setStatus({ kind: 'done', outcome });
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      setStatus({ kind: 'error', message: friendlyError(raw) });
+    }
   }
 
-  function resetToDemo() {
-    setAccount(config.demoAccount);
+  function forgetPasskey() {
     localStorage.removeItem(STORAGE_KEY);
+    setPasskey(null);
+    setAccount(null);
+    setStatus({ kind: 'idle' });
   }
 
   return (
     <main className="app">
       <header>
-        <h1>🔑 Secret-Question Wallet</h1>
+        <h1>🔑 Passkey Wallet</h1>
         <p className="tagline">
-          Answer your questions. It signs for you — no wallet, no seed phrase, no gas.
+          Tap once. Your device signs with Face ID / Touch ID / Windows Hello — no wallet, no seed
+          phrase, no gas.
         </p>
-
-        <nav>
-          <button className={screen === 'use' ? 'tab active' : 'tab'} onClick={() => setScreen('use')}>
-            Use
-          </button>
-          <button className={screen === 'setup' ? 'tab active' : 'tab'} onClick={() => setScreen('setup')}>
-            Create account
-          </button>
-          {!isDemoAccount && (
-            <button className="tab ghost" onClick={resetToDemo}>
-              ↺ demo account
-            </button>
-          )}
-        </nav>
 
         <details className="how">
           <summary>How it works</summary>
           <ol>
-            <li>You answer your secret questions in your browser.</li>
             <li>
-              Your browser derives a private key from the answers and <strong>signs</strong> a
-              request — locally; the answers stay on your machine.
+              Your browser creates (or reuses) a <strong>passkey</strong> — a P-256 key held by your
+              device's authenticator. The private key never leaves the device.
             </li>
             <li>
-              A <strong>bundler</strong> submits it for you; a <strong>Paymaster</strong> pays the gas.
+              You <strong>sign</strong> a request with your biometrics; the account address is derived
+              from the passkey's public key.
+            </li>
+            <li>
+              A <strong>bundler</strong> submits it; a <strong>Paymaster</strong> pays the gas. On
+              first use, that same transaction also <strong>deploys your account</strong> (a factory
+              + <code>initCode</code>) — no separate step.
             </li>
             <li>
               → A real Sepolia transaction happens with <strong>no wallet extension, no seed phrase,
-              no gas</strong>. That’s ERC-4337 account abstraction.
+              no gas</strong>. That's ERC-4337 account abstraction with WebAuthn.
             </li>
           </ol>
           <p className="muted small">
-            Your on-chain account (a <code>SecretQuestionAccount</code>) stores only the address
-            derived from your answers — never the answers themselves. In this shared demo the answers
-            are <strong>public on purpose</strong> (so anyone can try it); a real account would use
-            secret answers only you know. Full details &amp; security model are in the project README.
+            Your on-chain account (a <code>PasskeyAccount</code>) stores only your passkey's public key
+            (x, y). One browser = one account: passkeys are bound to this device, so there is no shared
+            demo account (unlike V2) and no cross-device sync. Full details in the project README.
           </p>
         </details>
       </header>
 
-      {screen === 'use' ? (
-        // key={account} -> remount (reset inputs/result, refetch counter) when the account changes
-        <UseScreen key={account} account={account} isDemoAccount={isDemoAccount} />
-      ) : (
-        <SetupScreen onAccountCreated={onAccountCreated} />
-      )}
+      <section className="card">
+        <p className="account-line">
+          {account ? (
+            <>
+              Account <code>{account}</code> <span className="badge badge-own">yours</span>
+            </>
+          ) : (
+            <span className="muted">No passkey yet on this browser — your first tap creates one.</span>
+          )}
+        </p>
+
+        {currentCount !== null && (
+          <p className="muted small">
+            Counter is currently at <strong>{currentCount.toString()}</strong>.
+          </p>
+        )}
+
+        {!passkey && (
+          <p className="info">
+            First tap prompts your biometrics <strong>twice</strong>: once to register the passkey,
+            once to sign. After that, a single prompt per run.
+          </p>
+        )}
+
+        <button type="button" onClick={onRun} disabled={running}>
+          {running ? (
+            <>
+              <span className="spinner" />
+              Working…
+            </>
+          ) : passkey ? (
+            'Increment the counter (gasless)'
+          ) : (
+            'Create a passkey & run (gasless)'
+          )}
+        </button>
+
+        {running && (
+          <p className="muted small" style={{ marginTop: '0.75rem' }}>
+            Approve the passkey prompt, then wait for the Sepolia block (~15s)…
+          </p>
+        )}
+
+        {passkey && (
+          <button type="button" className="tab ghost" style={{ marginTop: '0.75rem' }} onClick={forgetPasskey}>
+            ↺ forget this passkey
+          </button>
+        )}
+
+        {status.kind === 'error' && <p className="error">❌ {status.message}</p>}
+
+        {status.kind === 'done' && <Result outcome={status.outcome} />}
+      </section>
 
       <footer className="small">
-        Pedagogical demo on Sepolia — demo answers are public on purpose (brain-wallet model,
-        intentionally insecure).
+        Pedagogical demo on Sepolia — passkeys (WebAuthn P-256) + counterfactual factory deployment.
       </footer>
     </main>
+  );
+}
+
+function Result({ outcome }: { outcome: IncrementOutcome }) {
+  return (
+    <div className="result">
+      <div className="counter">
+        <span className="counter-before">{outcome.countBefore.toString()}</span>
+        <span className="counter-arrow">→</span>
+        <span className="counter-after">{outcome.countAfter.toString()}</span>
+      </div>
+      <p className="muted small" style={{ textAlign: 'center' }}>
+        One Ethereum transaction (the bundler's <code>handleOps</code>)
+        {outcome.deployed ? ' — it deployed your account AND ran the increment' : ''}; no wallet, no
+        gas on your side.
+      </p>
+      <p style={{ textAlign: 'center' }}>
+        <a href={`${config.explorerUrl}/tx/${outcome.txHash}`} target="_blank" rel="noreferrer">
+          View the bundler transaction ↗
+        </a>
+      </p>
+      <details className="tech">
+        <summary>Technical details</summary>
+        <p className="muted small">
+          Account: <code>{outcome.account}</code>
+          {outcome.deployed ? ' (deployed by this op)' : ''}
+        </p>
+        <p className="muted small">
+          Passkey public key: <code>{outcome.passkey.x}</code> / <code>{outcome.passkey.y}</code>
+        </p>
+        <p className="muted small">
+          userOpHash: <code>{outcome.userOpHash}</code>
+        </p>
+        <p className="muted small">
+          tx: <code>{outcome.txHash}</code>
+        </p>
+      </details>
+    </div>
   );
 }
 
