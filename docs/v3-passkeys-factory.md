@@ -152,6 +152,16 @@ the very first (deploying) UserOp exactly like any other — no chicken-and-egg 
 - **`webauthnIndices`** — the byte offsets of `"challenge":"` and `"type":"` that OZ's verifier reads.
 - **`encodeWebAuthnSignature`** — the naked-tuple encoding described above.
 
+### Browser support (iOS caveat)
+
+WebAuthn needs a **secure context** (HTTPS) — hence testing against the deployed Render URL. On
+**iOS, Apple restricts passkey access to Safari**: third-party browsers (Chrome, Firefox, Edge — all
+WebKit-wrapped) return a `NotAllowedError` ("permission denied") from
+`navigator.credentials.create/get`. This is a platform restriction, not a bug in this code (desktop
+Chrome works fine). The frontend does a best-effort
+`PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()` check on load and shows a "use
+Safari" hint when no authenticator is available, plus a clearer error message if a ceremony fails.
+
 ## Testing & the locked vector
 
 Foundry has **no P-256 signing cheatcode**, so a deterministic WebAuthn assertion is generated once

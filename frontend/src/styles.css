@@ -196,6 +196,31 @@ button:disabled {
   }
 }
 
+/* Value-prop pills row under the tagline (No wallet · No seed phrase · No gas). */
+.valueprops {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin: -0.5rem 0 1.25rem;
+}
+
+/* Discreet text-link button (e.g. "use a different passkey") — not a primary action. */
+.linkbtn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  padding: 0;
+  margin-top: 0.9rem;
+  text-decoration: underline;
+}
+
+.linkbtn:hover {
+  color: var(--accent);
+}
+
 /* ── Badges / info / error ───────────────────────── */
 .badge {
   display: inline-block;

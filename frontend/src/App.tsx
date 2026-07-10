@@ -3,7 +3,7 @@ import type { Hex } from 'viem';
 import { config, missingEnv } from './config';
 import { getAccountAddress, getCount } from './lib/chain';
 import { runPasskeyIncrement, type IncrementOutcome } from './lib/passkeyFlow';
-import type { Passkey } from './lib/webauthn';
+import { isPlatformAuthenticatorAvailable, type Passkey } from './lib/webauthn';
 import { friendlyError } from './lib/errors';
 
 const STORAGE_KEY = 'erc4337.v3.passkey';
@@ -36,6 +36,16 @@ function AppMain() {
   const [account, setAccount] = useState<Hex | null>(null);
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
   const [currentCount, setCurrentCount] = useState<bigint | null>(null);
+  const [authAvailable, setAuthAvailable] = useState<boolean | null>(null);
+
+  // Best-effort: is a platform authenticator usable here? (false on iOS Chrome/Firefox/Edge.)
+  useEffect(() => {
+    let cancelled = false;
+    isPlatformAuthenticatorAvailable().then((ok) => !cancelled && setAuthAvailable(ok));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Read the shared Counter once on load, so the before -> after has context.
   useEffect(() => {
@@ -93,8 +103,13 @@ function AppMain() {
       <header>
         <h1>🔑 Passkey Wallet</h1>
         <p className="tagline">
-          Tap once. Your device signs with Face ID / Touch ID / Windows Hello — no wallet, no seed
-          phrase, no gas.
+          Tap once and your device signs with Face ID / Touch ID / Windows Hello. A real transaction
+          happens on Ethereum — and you never open a wallet.
+        </p>
+        <p className="valueprops">
+          <span className="badge">No wallet</span>
+          <span className="badge">No seed phrase</span>
+          <span className="badge">No gas</span>
         </p>
 
         <details className="how">
@@ -109,28 +124,35 @@ function AppMain() {
               from the passkey's public key.
             </li>
             <li>
-              A <strong>bundler</strong> submits it; a <strong>Paymaster</strong> pays the gas. On
+              A <strong>bundler</strong> submits it and a <strong>Paymaster</strong> pays the gas. On
               first use, that same transaction also <strong>deploys your account</strong> (a factory
               + <code>initCode</code>) — no separate step.
             </li>
             <li>
-              → A real Sepolia transaction happens with <strong>no wallet extension, no seed phrase,
-              no gas</strong>. That's ERC-4337 account abstraction with WebAuthn.
+              → A real Sepolia transaction, with <strong>no wallet extension, no seed phrase, no
+              gas</strong>. That's ERC-4337 account abstraction with WebAuthn.
             </li>
           </ol>
           <p className="muted small">
             Your on-chain account (a <code>PasskeyAccount</code>) stores only your passkey's public key
             (x, y). One browser = one account: passkeys are bound to this device, so there is no shared
-            demo account (unlike V2) and no cross-device sync. Full details in the project README.
+            demo account and no cross-device sync. Details in the project README.
           </p>
         </details>
       </header>
 
       <section className="card">
+        {authAvailable === false && (
+          <p className="info">
+            ⚠️ No passkey authenticator detected in this browser. On iPhone/iPad, open this page in{' '}
+            <strong>Safari</strong> — other iOS browsers can't use passkeys.
+          </p>
+        )}
+
         <p className="account-line">
           {account ? (
             <>
-              Account <code>{account}</code> <span className="badge badge-own">yours</span>
+              Your account <code>{account}</code> <span className="badge badge-own">yours</span>
             </>
           ) : (
             <span className="muted">No passkey yet on this browser — your first tap creates one.</span>
@@ -139,27 +161,27 @@ function AppMain() {
 
         {currentCount !== null && (
           <p className="muted small">
-            Counter is currently at <strong>{currentCount.toString()}</strong>.
+            The shared counter is currently at <strong>{currentCount.toString()}</strong>.
           </p>
         )}
 
         {!passkey && (
           <p className="info">
-            First tap prompts your biometrics <strong>twice</strong>: once to register the passkey,
+            Your first tap asks for your biometrics <strong>twice</strong>: once to create the passkey,
             once to sign. After that, a single prompt per run.
           </p>
         )}
 
-        <button type="button" onClick={onRun} disabled={running}>
+        <button type="submit" onClick={onRun} disabled={running}>
           {running ? (
             <>
               <span className="spinner" />
               Working…
             </>
           ) : passkey ? (
-            'Increment the counter (gasless)'
+            'Increment the counter'
           ) : (
-            'Create a passkey & run (gasless)'
+            'Create your passkey & start'
           )}
         </button>
 
@@ -169,15 +191,17 @@ function AppMain() {
           </p>
         )}
 
-        {passkey && (
-          <button type="button" className="tab ghost" style={{ marginTop: '0.75rem' }} onClick={forgetPasskey}>
-            ↺ forget this passkey
-          </button>
-        )}
-
         {status.kind === 'error' && <p className="error">❌ {status.message}</p>}
 
         {status.kind === 'done' && <Result outcome={status.outcome} />}
+
+        {passkey && (
+          <div>
+            <button type="button" className="linkbtn" onClick={forgetPasskey}>
+              ↺ Use a different passkey
+            </button>
+          </div>
+        )}
       </section>
 
       <footer className="small">
@@ -196,20 +220,20 @@ function Result({ outcome }: { outcome: IncrementOutcome }) {
         <span className="counter-after">{outcome.countAfter.toString()}</span>
       </div>
       <p className="muted small" style={{ textAlign: 'center' }}>
-        One Ethereum transaction (the bundler's <code>handleOps</code>)
-        {outcome.deployed ? ' — it deployed your account AND ran the increment' : ''}; no wallet, no
-        gas on your side.
+        {outcome.deployed
+          ? 'Your smart account was created AND the counter incremented — in a single gasless transaction. You signed with your passkey; a bundler sent it and a Paymaster paid the gas.'
+          : 'Counter incremented — one gasless transaction, signed with your passkey.'}
       </p>
       <p style={{ textAlign: 'center' }}>
         <a href={`${config.explorerUrl}/tx/${outcome.txHash}`} target="_blank" rel="noreferrer">
-          View the bundler transaction ↗
+          View the transaction ↗
         </a>
       </p>
       <details className="tech">
         <summary>Technical details</summary>
         <p className="muted small">
           Account: <code>{outcome.account}</code>
-          {outcome.deployed ? ' (deployed by this op)' : ''}
+          {outcome.deployed ? ' (deployed by this transaction)' : ''}
         </p>
         <p className="muted small">
           Passkey public key: <code>{outcome.passkey.x}</code> / <code>{outcome.passkey.y}</code>

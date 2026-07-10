@@ -10,8 +10,8 @@ export function friendlyError(raw: string): string {
   if (/AA31/i.test(raw)) {
     return 'The Paymaster is out of funds — top up its deposit and retry.';
   }
-  if (/NotAllowed|cancel|timed? ?out/i.test(raw)) {
-    return 'The passkey prompt was dismissed or timed out — try again.';
+  if (/NotAllowed|cancel|timed? ?out|permission/i.test(raw)) {
+    return 'Passkey prompt cancelled, timed out, or blocked by this browser. On iPhone/iPad, open this page in Safari — other iOS browsers can\'t use passkeys.';
   }
   if (/Failed to fetch|NetworkError|ECONNREFUSED/i.test(raw)) {
     return 'Cannot reach the bundler — is it running?';

@@ -98,6 +98,22 @@ export function encodeWebAuthnSignature(a: {
 /* ────────────────────────────── BROWSER CEREMONIES ────────────────────────────── */
 
 /**
+ * Best-effort check for a usable platform authenticator (Face ID / Touch ID / Windows Hello).
+ * Returns false when the WebAuthn API is absent OR no platform authenticator is exposed to this
+ * browser — notably third-party browsers on iOS (Chrome/Firefox/Edge), where Apple restricts passkey
+ * access to Safari. Used only to surface a friendly hint; it never blocks the flow (a roaming
+ * security key would report false yet still work), so the button stays enabled regardless.
+ */
+export async function isPlatformAuthenticatorAvailable(): Promise<boolean> {
+  if (typeof window === 'undefined' || !window.PublicKeyCredential) return false;
+  try {
+    return await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Copies hex into a fresh Uint8Array backed by a plain ArrayBuffer, typed as `BufferSource`.
  * WebAuthn's `BufferSource` excludes `SharedArrayBuffer`, whereas viem's `hexToBytes` returns the
  * wider `Uint8Array<ArrayBufferLike>`. `new Uint8Array(length)` is always ArrayBuffer-backed, and the

@@ -16,8 +16,10 @@ approve your device's biometric prompt. The **first** tap registers a passkey an
 wallet**, and pay **no gas** — that is the whole point of ERC-4337 account abstraction.
 
 > Requires a browser/device with a passkey authenticator (Face ID, Touch ID, Windows Hello, or a
-> security key) and a secure (HTTPS) context. Hosted on Render's free tier — the first visit after a
-> while may take ~30-50s to wake the server.
+> security key) and a secure (HTTPS) context. Works in Chrome, Edge, Firefox and Safari on desktop,
+> and in Safari on iOS. **On iPhone/iPad, use Safari** — Apple restricts passkey access to Safari
+> there, so third-party iOS browsers (Chrome, Firefox, Edge) return a permission error.
+> Hosted on Render's free tier — the first visit after a while may take ~30-50s to wake the server.
 
 ## What this is
 
