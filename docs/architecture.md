@@ -40,7 +40,7 @@ In an EOA tx, a single entity does everything. ERC-4337 separates three question
 
 | Question | Classic EOA | ERC-4337 |
 |---|---|---|
-| **Who decides if the action is authorized?** | The protocol (secp256k1 check) | The **SmartAccount** (custom Solidity code) |
+| **Who decides if the action is authorized?** | The protocol (secp256k1 check) | The **account** (custom Solidity code) |
 | **Who sends the tx to the network?** | The sending EOA | The **Bundler** (a third-party EOA) |
 | **Who pays the gas in native ETH?** | The sender | The sender **OR a Paymaster** |
 
@@ -60,7 +60,7 @@ keys…).
 
  ┌─────────────┐
  │    User     │  1. creates a UserOperation (intent)
- │  (client)   │  2. SIGNS it (secp256k1 key in V1)
+ │  (client)   │  2. SIGNS it (secp256k1 key — see note *)
  └──────┬──────┘
         │ 3. eth_sendUserOperation (HTTP JSON-RPC)
         ▼
@@ -80,7 +80,7 @@ keys…).
         │             ╔═══════ VERIFICATION LOOP ═════╪═══════════════════╗
         │             ║                               ▼                   ║
         │             ║   8a. validateUserOp() ──▶ ┌──────────────┐       ║
-        │             ║       (signature check)    │ SMARTACCOUNT │       ║
+        │             ║       (signature check)    │   ACCOUNT *  │       ║
         │             ║                            └──────────────┘       ║
         │             ║   8b. validatePaymasterUserOp() ──▶ ┌──────────┐  ║
         │             ║       (does the paymaster accept?)  │ PAYMASTER│  ║
@@ -91,7 +91,7 @@ keys…).
         │             ╔═══════ EXECUTION LOOP ════════╪═══════════════════╗
         │             ║                               ▼                   ║
         │             ║   9a. runs the callData ───▶ ┌──────────────┐     ║
-        │             ║       (the real action)      │ SMARTACCOUNT │     ║
+        │             ║       (the real action)      │  ACCOUNT *   │     ║
         │             ║                              │  .execute()  │     ║
         │             ║                              └──────────────┘     ║
         │             ║   9b. postOp() ──▶ ┌──────────┐ (reconcile cost)  ║
@@ -103,13 +103,18 @@ keys…).
         └─────────────────── the bundler recovers its advanced ETH ───────────┘
 ```
 
+> \* **"ACCOUNT"** is generic here: `SmartAccount` in V1 (owner holds the key directly) or
+> `SecretQuestionAccount` in V2 (key derived client-side from secret answers). Both extend the
+> same abstract `BaseAccount`, which implements this exact flow — only the signature *check*
+> differs (`_validateSignature`). Details: [contracts.md](./contracts.md).
+
 ### Two key points of the flow
 
-1. **The SmartAccount is passive.** It sends nothing on its own: the **Bundler** sends the
-   `handleOps()` transaction to the EntryPoint. The SmartAccount only *responds* when the
+1. **The account is passive.** It sends nothing on its own: the **Bundler** sends the
+   `handleOps()` transaction to the EntryPoint. The account only *responds* when the
    EntryPoint calls it.
 
-2. **The EntryPoint calls the SmartAccount TWICE, separately**:
+2. **The EntryPoint calls the account TWICE, separately**:
    - first `validateUserOp()` ("is this signature valid?");
    - then, in a second phase, the execution of the `callData` (a call to `execute()`).
 
@@ -149,10 +154,11 @@ and advance the ETH to the network**: this is the **Bundler**.
 At the end of `handleOps()`, the EntryPoint **reimburses** the bundler (the `beneficiary`).
 With whose ETH? Two cases:
 
-#### Case A — Without a Paymaster: the SmartAccount pays
+#### Case A — Without a Paymaster: the account pays
 
-The SmartAccount must have an **ETH deposit on the EntryPoint** (or send it via the
-*prefund*). This is the role of `_payPrefund()` in `SmartAccount.sol`:
+The account must have an **ETH deposit on the EntryPoint** (or send it via the
+*prefund*). This is the role of `_payPrefund()` in `BaseAccount.sol` (shared by both
+`SmartAccount` and `SecretQuestionAccount`):
 
 ```solidity
 function _payPrefund(uint256 missingAccountFunds) internal {
@@ -166,19 +172,19 @@ function _payPrefund(uint256 missingAccountFunds) internal {
 `missingAccountFunds` = (estimated max cost) − (deposit already present on the EntryPoint). The
 account "tops up the difference" by sending ETH to the EntryPoint.
 
-→ In this case, the SmartAccount must hold ETH. The ETH was just moved from the "account" to
+→ In this case, the account must hold ETH. The ETH was just moved from the "account" to
 the "deposit on the EntryPoint". The need for ETH has not disappeared — only the "sign"
-(owner) and "send" (bundler) roles have been decoupled.
+(owner/signer) and "send" (bundler) roles have been decoupled.
 
 #### Case B — With a Paymaster: a third party pays for the user
 
 If the UserOp contains a non-empty `paymasterAndData`:
 
-- `missingAccountFunds` is **0** → the SmartAccount sends nothing.
+- `missingAccountFunds` is **0** → the account sends nothing.
 - The **Paymaster's deposit on the EntryPoint** covers the cost.
 - The EntryPoint calls `validatePaymasterUserOp()` to ask the Paymaster whether it agrees to
-  pay. The Paymaster can accept unconditionally (V1) or based on rules (whitelist, ERC-20
-  payment, quota…).
+  pay. The Paymaster can accept unconditionally (V1 & V2 — unchanged) or based on rules
+  (whitelist, ERC-20 payment, quota…).
 
 → The Paymaster holds the ETH (deposited on the EntryPoint). **The user needs NO ETH.** This is
 "gasless": the user signs, a third party pays.
@@ -187,14 +193,14 @@ If the UserOp contains a non-empty `paymasterAndData`:
 
 | Actor | Needs native ETH? | Why |
 |---|---|---|
-| **User (owner)** | ❌ with Paymaster / ✅ without | Without a Paymaster, their SmartAccount funds the prefund |
-| **SmartAccount** | ✅ without Paymaster / ❌ with | Source of the reimbursement when there is no sponsor |
+| **User (owner/signer)** | ❌ with Paymaster / ✅ without | Without a Paymaster, their account funds the prefund |
+| **Account** | ✅ without Paymaster / ❌ with | Source of the reimbursement when there is no sponsor |
 | **Bundler** | ✅ **always** | Signs and advances the gas of the real `handleOps()` tx |
 | **Paymaster** | ✅ if used | Reimburses the bundler instead of the user |
 | **EntryPoint** | ❌ | It only keeps the deposit accounting |
 
 In practice, on a testnet (free ETH via a faucet), you must fund at least the **Bundler**
-(mandatory) and, depending on the mode, either the **SmartAccount** or the **Paymaster**.
+(mandatory) and, depending on the mode, either the **account** or the **Paymaster**.
 
 ---
 
@@ -202,11 +208,13 @@ In practice, on a testnet (free ETH via a faucet), you must fund at least the **
 
 | Component | Nature | Built in this project? | Role in one sentence |
 |---|---|---|---|
-| `PackedUserOperation` | struct | ✅ (interface) | The user's signed intent |
-| `SmartAccount` | Solidity contract | ✅ | The user's account; validates + executes |
+| `PackedUserOperation` | struct | ✅ (interface) | The user's signed intent — what these docs informally call "the UserOp"; "packed" refers to a few fields (`accountGasLimits`, `gasFees`) being bit-packed to save calldata, detailed in [contracts.md](./contracts.md#interfaces) |
+| `BaseAccount` | abstract Solidity contract | ✅ | Shared validate/execute/prefund logic; `_validateSignature` is the hook |
+| `SmartAccount` (V1) | Solidity contract | ✅ | `BaseAccount` + ECDSA against a fixed `s_owner` |
+| `SecretQuestionAccount` (V2) | Solidity contract | ✅ | `BaseAccount` + ECDSA against a KDF-derived `s_signerAddress` |
 | `Paymaster` | Solidity contract | ✅ | Sponsors the gas for the user |
 | `Counter` | Solidity contract | ✅ | Demo witness contract (UserOps target) |
-| `Bundler` | Node.js server | ✅ | Collects UserOps, sends `handleOps` |
+| `Bundler` | Node.js server | ✅ | Collects UserOps, simulates, sends `handleOps` |
 | `EntryPoint` | Singleton contract | ❌ (deployed by the EF) | Orchestrates validation + execution |
 
 ---
@@ -215,5 +223,5 @@ In practice, on a testnet (free ETH via a faucet), you must fund at least the **
 
 - Contract details (validation, signature, packing): [contracts.md](./contracts.md)
 - Bundler details (JSON-RPC, hash computation, serialization): [bundler.md](./bundler.md)
-- Deployment and end-to-end testing: [deployment.md](./deployment.md)
-- Deliberate V1 simplifications: [limitations-v1.md](./limitations-v1.md)
+- V2 auth-by-knowledge specifics: [v2-auth-by-knowledge.md](./v2-auth-by-knowledge.md)
+- Deliberate simplifications (V1 & V2): [limitations.md](./limitations.md)

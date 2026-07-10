@@ -18,7 +18,7 @@ import { assertValidUserOpHex, toPacked, type UserOperationHex } from './userOp'
  *      (and can't be gas-drained by spamming wrong answers).
  *   4. Submit the real handleOps tx only if the dry-run passed, then wait for the receipt.
  *
- * This lifts part of the V1 "no simulation" limitation (docs/limitations-v1.md): we still do not
+ * This lifts part of the "no simulation" limitation (docs/limitations.md): we still do not
  * enforce ERC-7562 opcode rules, but we no longer blindly submit operations that will revert.
  */
 export async function handleSendUserOperation(
