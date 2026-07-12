@@ -18,6 +18,9 @@ import { assertValidUserOpHex, toPacked, type UserOperationHex } from './userOp'
  *      (and can't be gas-drained by spamming wrong answers).
  *   4. Submit the real handleOps tx only if the dry-run passed, then wait for the receipt.
  *
+ * Steps 3-4 are serialized across concurrent requests (one in-flight handleOps at a time,
+ * see enqueueSend): two UserOps arriving together cannot grab the same bundler EOA nonce.
+ *
  * This lifts part of the "no simulation" limitation (docs/limitations.md): we still do not
  * enforce ERC-7562 opcode rules, but we no longer blindly submit operations that will revert.
  */
@@ -50,26 +53,30 @@ export async function handleSendUserOperation(
   console.log(`[bundler] -> userOp from ${userOp.sender} | userOpHash=${userOpHash}`);
 
   try {
-    // 3. DRY-RUN: simulate handleOps. Throws (without sending a tx) if the op would revert.
-    const { request } = await publicClient.simulateContract({
-      account: bundlerAccount,
-      address: config.entryPoint,
-      abi: entryPointAbi,
-      functionName: 'handleOps',
-      args: [[userOp], bundlerAccount.address],
+    // Steps 3+4 run one at a time (see enqueueSend below): an op arriving while another
+    // tx is in flight waits here instead of racing it for the bundler EOA nonce.
+    return await enqueueSend(async () => {
+      // 3. DRY-RUN: simulate handleOps. Throws (without sending a tx) if the op would revert.
+      const { request } = await publicClient.simulateContract({
+        account: bundlerAccount,
+        address: config.entryPoint,
+        abi: entryPointAbi,
+        functionName: 'handleOps',
+        args: [[userOp], bundlerAccount.address],
+      });
+
+      // 4. SEND: simulation passed -> the real tx should succeed. The bundler signs and pays it.
+      const txHash = await walletClient.writeContract(request);
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      if (receipt.status !== 'success') {
+        console.error(`[bundler] !! tx ${txHash} mined but REVERTED (block ${receipt.blockNumber})`);
+        throw new Error(`handleOps reverted on-chain: ${txHash}`);
+      }
+
+      console.log(`[bundler] OK ACCEPTED ${userOpHash} | tx ${txHash} | block ${receipt.blockNumber}`);
+      return { userOpHash, txHash };
     });
-
-    // 4. SEND: simulation passed -> the real tx should succeed. The bundler signs and pays it.
-    const txHash = await walletClient.writeContract(request);
-    const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
-
-    if (receipt.status !== 'success') {
-      console.error(`[bundler] !! tx ${txHash} mined but REVERTED (block ${receipt.blockNumber})`);
-      throw new Error(`handleOps reverted on-chain: ${txHash}`);
-    }
-
-    console.log(`[bundler] OK ACCEPTED ${userOpHash} | tx ${txHash} | block ${receipt.blockNumber}`);
-    return { userOpHash, txHash };
   } catch (err) {
     const reason = extractRevertReason(err);
     if (reason) {
@@ -81,6 +88,29 @@ export async function handleSendUserOperation(
     console.error(`[bundler] !! ERROR for ${userOpHash}:`, err instanceof Error ? err.message : err);
     throw err;
   }
+}
+
+/**
+ * In-process mutex: serializes the simulate+send+wait section above, so only one handleOps
+ * transaction is in flight at a time. viem fills the transaction nonce at writeContract time
+ * (eth_getTransactionCount 'pending'), so two concurrent requests would read the SAME nonce
+ * for the bundler EOA and one of the two txs would fail. Serializing also means each op is
+ * simulated against the state left by the previous one (e.g. a duplicate op from the same
+ * account is cleanly rejected at the dry-run, without wasting gas on a doomed tx).
+ *
+ * The chain itself must never reject — a rejected link would instantly fail every later
+ * request — so failures are swallowed when re-assigning it; `result` (returned before the
+ * swallow) still propagates each task's own failure to its caller.
+ */
+let sendChain: Promise<void> = Promise.resolve();
+
+function enqueueSend<T>(task: () => Promise<T>): Promise<T> {
+  const result = sendChain.then(task);
+  sendChain = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
 }
 
 /**
