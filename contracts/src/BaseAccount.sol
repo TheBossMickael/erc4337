@@ -9,7 +9,7 @@ import {IEntryPoint} from "./interfaces/IEntryPoint.sol";
 ///         signature schemes (validation flow, prefund, execution, deposit) and leaves the
 ///         signature check itself as a single overridable hook: `_validateSignature`.
 /// @dev Template Method pattern. Concrete accounts (SmartAccount V1, SecretQuestionAccount V2,
-///      a future PasskeyAccount V3) only implement `_validateSignature` (+ `_authorizedAdmin`).
+///      PasskeyAccount V3) only implement `_validateSignature` (+ `_authorizedAdmin`).
 ///
 ///      Lifecycle of a UserOp as seen by an account:
 ///        1. validateUserOp()  ← EntryPoint asks "is this signature valid?"

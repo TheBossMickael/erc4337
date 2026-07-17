@@ -20,23 +20,14 @@ from an EOA (the case of a MetaMask-style wallet).
      └──────────── the sender pays the gas IN ETH, themselves ───────────┘
 ```
 
-Characteristics of this model:
-
-1. **The EOA *is* the account.** The address is derived from the public key. No code behind
-   it, just a key pair.
-2. **A single possible authorization authority**: the secp256k1 signature. Ethereum, at the
-   consensus level, can only verify that.
-3. **The sender pays their gas, in ETH, from their own balance.** No ETH = no action possible.
-4. **`from` = the one who signs = the one who pays.** These three roles are fused and
-   inseparable in a classic tx.
-
-It is this rigid fusion that ERC-4337 decouples.
+In this model: the EOA **is** the account (a key pair, no code); the only authorization the
+protocol can verify is the secp256k1 signature; and **`from` = the one who signs = the one who
+pays, in ETH, from their own balance** — no ETH, no action. It is this rigid fusion that
+ERC-4337 decouples.
 
 ---
 
 ## 1. The core idea: decouple 3 roles that used to be fused
-
-In an EOA tx, a single entity does everything. ERC-4337 separates three questions:
 
 | Question | Classic EOA | ERC-4337 |
 |---|---|---|
@@ -44,11 +35,11 @@ In an EOA tx, a single entity does everything. ERC-4337 separates three question
 | **Who sends the tx to the network?** | The sending EOA | The **Bundler** (a third-party EOA) |
 | **Who pays the gas in native ETH?** | The sender | The sender **OR a Paymaster** |
 
-Important point: ERC-4337 **does not bypass** Ethereum's cryptography. At the lowest level, a
-*real* secp256k1-signed transaction is always sent to the network — that of the **Bundler**.
-What gets moved is the decision "is this action authorized?": it shifts from the protocol to a
-**smart contract**, which can then accept other schemes (P-256 passkey, multisig, session
-keys…).
+ERC-4337 **does not bypass** Ethereum's cryptography: a *real* secp256k1-signed transaction is
+still what reaches the network — the **Bundler**'s. What moves is the decision "is this action
+authorized?", from the protocol into a **smart contract** — which can then accept other schemes.
+V3 does exactly that with WebAuthn P-256 passkeys; multisig or session keys would slot in the
+same way.
 
 ---
 
@@ -60,7 +51,7 @@ keys…).
 
  ┌─────────────┐
  │    User     │  1. creates a UserOperation (intent)
- │  (client)   │  2. SIGNS it (secp256k1 key — see note *)
+ │  (client)   │  2. SIGNS it (scheme depends on the version — see note *)
  └──────┬──────┘
         │ 3. eth_sendUserOperation (HTTP JSON-RPC)
         ▼
@@ -103,91 +94,56 @@ keys…).
         └─────────────────── the bundler recovers its advanced ETH ───────────┘
 ```
 
-> \* **"ACCOUNT"** is generic here: `SmartAccount` in V1 (owner holds the key directly) or
-> `SecretQuestionAccount` in V2 (key derived client-side from secret answers). Both extend the
-> same abstract `BaseAccount`, which implements this exact flow — only the signature *check*
-> differs (`_validateSignature`). Details: [contracts.md](./contracts.md).
+> \* **"ACCOUNT"** is generic here: `SmartAccount` in V1 (ECDSA, the owner holds the key),
+> `SecretQuestionAccount` in V2 (ECDSA, key derived client-side from secret answers) or
+> `PasskeyAccount` in V3 (WebAuthn — the device's P-256 authenticator signs). All extend the same
+> abstract `BaseAccount` — only the signature *check* differs (`_validateSignature`). Details:
+> [contracts.md](./contracts.md).
 
-### Two key points of the flow
+### Three key points of the flow
 
 1. **The account is passive.** It sends nothing on its own: the **Bundler** sends the
-   `handleOps()` transaction to the EntryPoint. The account only *responds* when the
-   EntryPoint calls it.
+   `handleOps()` transaction; the account only *responds* when the EntryPoint calls it.
 
-2. **The EntryPoint calls the account TWICE, separately**:
-   - first `validateUserOp()` ("is this signature valid?");
-   - then, in a second phase, the execution of the `callData` (a call to `execute()`).
+2. **The EntryPoint calls the account TWICE, separately**: first `validateUserOp()` ("is this
+   signature valid?"), then — after validating the Paymaster and checking the funds — the
+   execution of the `callData`. Hence the two loops: validate everything first, execute next.
 
-   Between the two, the EntryPoint also validates the Paymaster and checks the funds. Hence
-   the **two loops**: validate everything first, execute everything next.
+3. **The account may not even exist yet (V3).** If `sender` has no code and the UserOp carries
+   an `initCode`, the EntryPoint first calls the **AccountFactory** (CREATE2) to deploy it —
+   inside the same `handleOps`, just before step 8a. Deployment is simply one more sponsored
+   step of the first UserOp. Details: [v3-passkeys-factory.md](./v3-passkeys-factory.md).
 
 ---
 
 ## 3. Why two separate loops? (verification then execution)
 
-It is an **economic protection for the bundler**.
-
-The bundler spends its own ETH to send `handleOps()`. It needs the guarantee of being
-reimbursed. If the EntryPoint validated-then-executed each UserOp one by one, a late UserOp in
-the bundle could invalidate the state and cause the reimbursement of the earlier ones to fail
-— the bundler would have paid for nothing.
-
-By **validating everything first** (and checking the deposits cover the max cost of the
-*whole* bundle), the EntryPoint guarantees the bundle is profitable *before* spending the
-expensive execution gas.
+An **economic protection for the bundler**. The bundler spends its own ETH on `handleOps()` and
+needs the guarantee of being reimbursed. By **validating everything first** (and checking the
+deposits cover the max cost of the *whole* bundle), the EntryPoint guarantees the bundle is
+profitable *before* spending the expensive execution gas — otherwise a late UserOp could
+invalidate the earlier ones after their gas was already burned.
 
 ---
 
 ## 4. Who pays the gas, and with which ETH?
 
-This is the most common source of confusion. There are **two distinct "gas" levels**.
+The most common source of confusion — there are **two distinct "gas" levels**.
 
-### Level 1 — The network gas of the real transaction
+**Level 1 — the network gas.** `handleOps()` is a real Ethereum transaction: like any tx,
+someone must sign it and advance the ETH — the **Bundler**. It must always hold native ETH.
 
-`handleOps()` is a real Ethereum transaction. Like any tx, **someone must sign it with an EOA
-and advance the ETH to the network**: this is the **Bundler**.
+**Level 2 — the bundler's reimbursement.** At the end of `handleOps()`, the EntryPoint
+reimburses the bundler (the `beneficiary`). With whose ETH? Two cases:
 
-→ The bundler must hold native ETH. It pays the "network" gas at the moment the tx is sent.
-
-### Level 2 — The bundler's reimbursement
-
-At the end of `handleOps()`, the EntryPoint **reimburses** the bundler (the `beneficiary`).
-With whose ETH? Two cases:
-
-#### Case A — Without a Paymaster: the account pays
-
-The account must have an **ETH deposit on the EntryPoint** (or send it via the
-*prefund*). This is the role of `_payPrefund()` in `BaseAccount.sol` (shared by both
-`SmartAccount` and `SecretQuestionAccount`):
-
-```solidity
-function _payPrefund(uint256 missingAccountFunds) internal {
-    if (missingAccountFunds != 0) {
-        (bool success,) = payable(i_entryPoint).call{value: missingAccountFunds}("");
-        (success);
-    }
-}
-```
-
-`missingAccountFunds` = (estimated max cost) − (deposit already present on the EntryPoint). The
-account "tops up the difference" by sending ETH to the EntryPoint.
-
-→ In this case, the account must hold ETH. The ETH was just moved from the "account" to
-the "deposit on the EntryPoint". The need for ETH has not disappeared — only the "sign"
-(owner/signer) and "send" (bundler) roles have been decoupled.
-
-#### Case B — With a Paymaster: a third party pays for the user
-
-If the UserOp contains a non-empty `paymasterAndData`:
-
-- `missingAccountFunds` is **0** → the account sends nothing.
-- The **Paymaster's deposit on the EntryPoint** covers the cost.
-- The EntryPoint calls `validatePaymasterUserOp()` to ask the Paymaster whether it agrees to
-  pay. The Paymaster can accept unconditionally (V1 & V2 — unchanged) or based on rules
-  (whitelist, ERC-20 payment, quota…).
-
-→ The Paymaster holds the ETH (deposited on the EntryPoint). **The user needs NO ETH.** This is
-"gasless": the user signs, a third party pays.
+- **Case A — without a Paymaster: the account pays.** The account must hold an ETH deposit on
+  the EntryPoint; `_payPrefund()` (in `BaseAccount.sol`, shared by every account version) tops
+  up the missing difference. The need for ETH has not disappeared — only the "sign" (owner) and
+  "send" (bundler) roles were decoupled.
+- **Case B — with a Paymaster: a third party pays.** With a non-empty `paymasterAndData`, the
+  account sends nothing and the **Paymaster's deposit** covers the cost — after the EntryPoint
+  asked it via `validatePaymasterUserOp()` (ours accepts everything; a real one would filter).
+  **The user needs NO ETH** — this is "gasless": the user signs, a third party pays.
 
 ### Summary table "who needs ETH?"
 
@@ -199,8 +155,8 @@ If the UserOp contains a non-empty `paymasterAndData`:
 | **Paymaster** | ✅ if used | Reimburses the bundler instead of the user |
 | **EntryPoint** | ❌ | It only keeps the deposit accounting |
 
-In practice, on a testnet (free ETH via a faucet), you must fund at least the **Bundler**
-(mandatory) and, depending on the mode, either the **account** or the **Paymaster**.
+In practice on a testnet you must fund the **Bundler** (always) and, depending on the mode,
+either the account or the **Paymaster**.
 
 ---
 
@@ -208,20 +164,23 @@ In practice, on a testnet (free ETH via a faucet), you must fund at least the **
 
 | Component | Nature | Built in this project? | Role in one sentence |
 |---|---|---|---|
-| `PackedUserOperation` | struct | ✅ (interface) | The user's signed intent — what these docs informally call "the UserOp"; "packed" refers to a few fields (`accountGasLimits`, `gasFees`) being bit-packed to save calldata, detailed in [contracts.md](./contracts.md#interfaces) |
+| `PackedUserOperation` | struct | ✅ (interface) | The user's signed intent — what these docs informally call "the UserOp" |
 | `BaseAccount` | abstract Solidity contract | ✅ | Shared validate/execute/prefund logic; `_validateSignature` is the hook |
 | `SmartAccount` (V1) | Solidity contract | ✅ | `BaseAccount` + ECDSA against a fixed `s_owner` |
 | `SecretQuestionAccount` (V2) | Solidity contract | ✅ | `BaseAccount` + ECDSA against a KDF-derived `s_signerAddress` |
+| `PasskeyAccount` (V3) | Solidity contract | ✅ | `BaseAccount` + WebAuthn P-256 against a stored public key `(x, y)` |
+| `AccountFactory` (V3) | Solidity contract | ✅ | CREATE2 factory — counterfactual deployment via `initCode` |
 | `Paymaster` | Solidity contract | ✅ | Sponsors the gas for the user |
 | `Counter` | Solidity contract | ✅ | Demo witness contract (UserOps target) |
-| `Bundler` | Node.js server | ✅ | Collects UserOps, simulates, sends `handleOps` |
+| `Bundler` | Node.js server | ✅ | Collects UserOps, simulates, sends `handleOps` one at a time |
 | `EntryPoint` | Singleton contract | ❌ (deployed by the EF) | Orchestrates validation + execution |
 
 ---
 
 ## 6. Going further
 
-- Contract details (validation, signature, packing): [contracts.md](./contracts.md)
-- Bundler details (JSON-RPC, hash computation, serialization): [bundler.md](./bundler.md)
-- V2 auth-by-knowledge specifics: [v2-auth-by-knowledge.md](./v2-auth-by-knowledge.md)
-- Deliberate simplifications (V1 & V2): [limitations.md](./limitations.md)
+- Contract details (validation, signature, factory): [contracts.md](./contracts.md)
+- Bundler details (JSON-RPC, simulation, serialized submission): [bundler.md](./bundler.md)
+- V2 auth-by-knowledge specifics: the V2 doc at tag [`v2.0.0`](https://github.com/TheBossMickael/erc4337/blob/v2.0.0/docs/v2-auth-by-knowledge.md)
+- V3 passkeys + counterfactual factory: [v3-passkeys-factory.md](./v3-passkeys-factory.md)
+- Deliberate simplifications (V1–V3): [limitations.md](./limitations.md)
