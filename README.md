@@ -5,16 +5,16 @@
 > authentication **by knowledge**: answer 3 secret questions and a real gasless transaction happens
 > on Sepolia — no wallet extension, no seed phrase, no gas.
 
-**Status:** V2 — shipped, deployed + verified on Sepolia, and **hosted live**.
+**Status:** V2 — shipped, deployed + verified on Sepolia. No longer hosted live (see below).
 
 ## ▶ Live demo
 
-**[erc4337.onrender.com](https://erc4337.onrender.com)** — open it, answer `rex` / `paris` /
-`inception`, click *Run*, and watch an on-chain counter increment. You sign **no Ethereum
-transaction**, install **no wallet**, and pay **no gas** — that is the whole point of ERC-4337
-account abstraction.
-
-> Hosted on Render's free tier — the first visit after a while may take ~30-50s to wake the server.
+**No longer hosted.** [erc4337.onrender.com](https://erc4337.onrender.com) now serves **V3**
+(WebAuthn passkeys) — the same Render service was reused for the newer milestone instead of
+running a second one. The V2 contracts are still deployed and verified on Sepolia (see
+[Deployed on Sepolia](#deployed-on-sepolia)); there is just no public URL running this V2
+frontend anymore. For the current live demo, see the
+[main branch](https://github.com/TheBossMickael/erc4337).
 
 ## What this is
 
@@ -166,8 +166,9 @@ Demo signer derived from `rex` / `paris` / `inception`: `0x6791C67E22f99Cf7D019f
 
 ## Hosting
 
-Hosted live on **Render** as a single web service — [erc4337.onrender.com](https://erc4337.onrender.com).
-Config: [render.yaml](render.yaml).
+No longer hosted live — [erc4337.onrender.com](https://erc4337.onrender.com) now serves **V3**
+(same Render service, reused rather than duplicated). Config for this V2 service was
+[render.yaml](render.yaml); the contracts above remain deployed and verified on Sepolia.
 
 ## Documentation
 

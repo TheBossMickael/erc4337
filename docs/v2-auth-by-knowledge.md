@@ -79,8 +79,8 @@ set. Assuming and explaining the insecurity is a stronger signal than pretending
 
 ## Hosting
 
-Hosted live on Render as a single web service —
-[erc4337.onrender.com](https://erc4337.onrender.com). Config: [render.yaml](../render.yaml).
+No longer hosted live — [erc4337.onrender.com](https://erc4337.onrender.com) now serves **V3**
+(same Render service, reused rather than duplicated). Config: [render.yaml](../render.yaml).
 
 ## What did NOT change from V1
 
