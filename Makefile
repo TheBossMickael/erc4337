@@ -38,7 +38,7 @@ test:
 	cd contracts && forge test -vvv
 
 test-fork:
-	cd contracts && forge test --match-path test/Integration.fork.t.sol --fork-url $(SEPOLIA_RPC_URL) -vvv
+	cd contracts && forge test --match-path "test/*.fork.t.sol" --fork-url $(SEPOLIA_RPC_URL) -vvv
 
 anvil:
 	anvil --fork-url $(SEPOLIA_RPC_URL) --chain-id 11155111
